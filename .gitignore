@@ -1,2 +1,9 @@
 # Project
 .idea/
+
+# Composer
+vendor/
+composer.lock
+
+# PhpUnit
+.phpunit.cache/

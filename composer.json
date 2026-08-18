@@ -1,0 +1,21 @@
+{
+  "autoload": {
+    "psr-4": {
+      "Regex\\": "src/"
+    },
+    "files": [
+      "src/preg_test.php"
+    ]
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Test\\": "test/"
+    }
+  },
+  "require": {
+    "php": ">=7.4.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^9.6.36"
+  }
+}
