@@ -101,7 +101,7 @@ final class HtmlReport
 
           <div class="card">
             <h2>Converged cost per operation</h2>
-            <p class="desc">Median of the tail rounds, once each method's noise floor was reached, {$roundsRun} rounds to converge across all methods. Costs beyond the baseline are shown as baseline + added cost.</p>
+            <p class="desc">Median of the tail rounds, once each method's noise floor was reached, {$roundsRun} rounds to converge across all methods. Every method is shown as the baseline plus or minus what it changes.</p>
             <table class="data-table">
               <thead>
                 <tr><th>Method</th><th>Cost</th><th class="num">Iterations</th><th class="num">ns/op</th><th class="num">vs. base</th></tr>

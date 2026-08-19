@@ -88,6 +88,12 @@ $name = $positional[0] ?? 'preg-match-call-shapes';
 $pattern = '/^[\w.+-]+@[\w-]+\.[\w.]{2,}$/';
 $subject = 'daniel.wilkowski@example.co.uk';
 
+// The same pattern with the second character class left unterminated, which
+// PCRE refuses to compile: "missing terminating ] for character class". A
+// missing delimiter would not do - PHP rejects that before PCRE is reached, so
+// it would not price a real compilation failure.
+$brokenPattern = '/^[\w.+-]+@[\w-]+\.[\w.{2,}$/';
+
 // A full round of 0.5s stays comfortably above scheduler/timer noise while
 // still redrawing the table a couple of times a second per method. A quick
 // round is short enough that the noise it lets through is real - it is there to
@@ -105,13 +111,27 @@ $convergence = $quick
 $benchmark = new Benchmark(new CliInterface($name), $calibrator, $convergence);
 
 // Baseline first - every other method is reported against it. Each body assigns
-// its result to a variable that is never read, identically in all three:
+// its result to a variable that is never read, identically in all of them:
 // dropping the assignment in some and not others would compare loops that do
 // different amounts of work.
+//
+// The last three price the idiom for finding out whether preg_match() warned:
+// clear the last error, call, then read the error back. It has to be done that
+// way round because a custom error handler is not an option - one that returns
+// true stops error_get_last() being populated at all, which is the very thing
+// being read.
 $report = $benchmark->measure([
     'plain (inline preg_match)'        => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, $subject) === 1;
+        }
+    },
+    // Nothing to scan, so this is the floor: what a preg_match() costs before
+    // any of the subject has been looked at. The gap to the baseline is what
+    // matching those 30 characters actually costs.
+    'plain (empty subject)'            => static function (int $n) use ($pattern): void {
+        for ($i = 0; $i < $n; $i++) {
+            $matched = preg_match($pattern, '') === 1;
         }
     },
     'matchOnce (1 preg_match call)'    => static function (int $n) use ($pattern, $subject): void {
@@ -122,6 +142,40 @@ $report = $benchmark->measure([
     'matchThrice (3 preg_match calls)' => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = matchThrice($pattern, $subject);
+        }
+    },
+    // Half the idiom: clearing beforehand, without reading anything back. The
+    // gap to the baseline is what error_clear_last() costs on its own.
+    'clear error + match'              => static function (int $n) use ($pattern, $subject): void {
+        for ($i = 0; $i < $n; $i++) {
+            error_clear_last();
+            $matched = preg_match($pattern, $subject) === 1;
+        }
+    },
+    // The whole idiom on the happy path, where there is no error to find.
+    'clear + match + read (no error)'  => static function (int $n) use ($pattern, $subject): void {
+        for ($i = 0; $i < $n; $i++) {
+            error_clear_last();
+            $matched = preg_match($pattern, $subject) === 1;
+            $error = error_get_last();
+        }
+    },
+    // The same, but the pattern does not compile, so there is a warning to
+    // clear, raise and read on every iteration.
+    //
+    // Two things make this not a like-for-like comparison against the row
+    // above, and both are inherent rather than accidental. The warning has to
+    // be suppressed - without `@` PHP prints it on every one of the tens of
+    // thousands of iterations in a round, which would swamp both the terminal
+    // and the timing - so this row carries the cost of suppression too. And a
+    // pattern that fails to compile is not cached, so every call recompiles it
+    // and fails again: what is priced here is a failing compile, not just the
+    // reading of an error.
+    'clear + match + read (error)'     => static function (int $n) use ($brokenPattern, $subject): void {
+        for ($i = 0; $i < $n; $i++) {
+            error_clear_last();
+            $matched = @preg_match($brokenPattern, $subject) === 1;
+            $error = error_get_last();
         }
     },
 ]);
