@@ -17,7 +17,7 @@ require __DIR__ . '/lib.php';
 // Windows terminals need VT100 processing turned on explicitly for ANSI
 // cursor movement; POSIX terminals already support it.
 if (function_exists('sapi_windows_vt100_support')) {
-    @sapi_windows_vt100_support(STDOUT, true);
+    @\sapi_windows_vt100_support(\STDOUT, true);
 }
 
 const ESC = "\x1b";
@@ -40,11 +40,11 @@ function renderTable(array $state, string $pattern, string $subject, float $targ
     $lines[] = "preg_match() call-shape benchmark (live)";
     $lines[] = "pattern: {$pattern}   subject: {$subject}   target round length: ~" . number_format($targetRoundSeconds, 1) . 's (iterations/round calibrated per method)';
     $lines[] = "";
-    $lines[] = sprintf("%-34s %12s %8s %14s %14s %10s %14s %s", 'method', 'iters/round', 'rounds', 'last (ns)', 'block med (ns)', 'streak', 'avg (ns)', 'status');
+    $lines[] = \sPrintF("%-34s %12s %8s %14s %14s %10s %14s %s", 'method', 'iters/round', 'rounds', 'last (ns)', 'block med (ns)', 'streak', 'avg (ns)', 'status');
     $lines[] = str_repeat('-', 34 + 1 + 12 + 1 + 8 + 1 + 14 + 1 + 14 + 1 + 10 + 1 + 14 + 1 + 10);
 
     foreach ($state as $name => $s) {
-        $lines[] = sprintf(
+        $lines[] = \sPrintF(
             "%-34s %12s %8d %14s %14s %10s %14s %s",
             $name,
             $s['iterations'] > 0 ? number_format($s['iterations']) : 'calibrating',
@@ -73,7 +73,7 @@ $subject = 'daniel.wilkowski@example.co.uk';
 // Override with BENCH_TARGET_SECONDS=0.05 php benchmark/cli.php for a quick
 // smoke test. 0.5s keeps each round comfortably above scheduler/timer noise
 // while still redrawing the TUI a couple of times a second per method.
-$targetRoundSeconds = (float) (getenv('BENCH_TARGET_SECONDS') ?: 0.5);
+$targetRoundSeconds = (float)(\getEnv('BENCH_TARGET_SECONDS') ?: 0.5);
 
 $methods = benchmarkMethods($pattern, $subject);
 
@@ -115,7 +115,7 @@ foreach ($methods as $name => $body) {
 
     $onCalibrationAttempt = function (int $n, float $elapsedSeconds) use (&$state, $name, $redraw): void {
         $state[$name]['iterations'] = $n;
-        $state[$name]['status'] = sprintf('calibrating (%.2fs @ %s iters)', $elapsedSeconds, number_format($n));
+        $state[$name]['status'] = \sPrintF('calibrating (%.2fs @ %s iters)', $elapsedSeconds, number_format($n));
         $redraw();
     };
 
@@ -124,7 +124,7 @@ foreach ($methods as $name => $body) {
         $targetRoundSeconds,
         $calibrationSeedIterations,
         $calibrationMaxIterations,
-        $onCalibrationAttempt
+        $onCalibrationAttempt,
     );
 
     $state[$name]['iterations'] = $iterationsByName[$name];
@@ -165,8 +165,8 @@ while (!$allConverged) {
 
         if ($c['converged']) {
             $state[$name]['status'] = 'converged';
-        } elseif ($c['warmupRemaining'] > 0) {
-            $state[$name]['status'] = sprintf('warmup %d/%d', $c['warmupTotal'] - $c['warmupRemaining'], $c['warmupTotal']);
+        } else if ($c['warmupRemaining'] > 0) {
+            $state[$name]['status'] = \sPrintF('warmup %d/%d', $c['warmupTotal'] - $c['warmupRemaining'], $c['warmupTotal']);
         } else {
             $state[$name]['status'] = 'running';
         }
@@ -202,12 +202,12 @@ foreach (array_keys($methods) as $name) {
 }
 
 $output = [
-    'pattern'               => $pattern,
-    'subject'               => $subject,
-    'target_round_seconds'  => $targetRoundSeconds,
-    'php_version'           => PHP_VERSION,
-    'generated_at'          => date('c'),
-    'methods'               => $results,
+    'pattern'              => $pattern,
+    'subject'              => $subject,
+    'target_round_seconds' => $targetRoundSeconds,
+    'php_version'          => PHP_VERSION,
+    'generated_at'         => date('c'),
+    'methods'              => $results,
 ];
 
 $outFile = __DIR__ . '/report.json';
