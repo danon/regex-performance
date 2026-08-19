@@ -2,216 +2,129 @@
 /**
  * Live TUI benchmark runner.
  *
- * Runs the three call-shape benchmarks interleaved, round-robin - one round
- * of each method in turn, not all of one method before starting the next -
- * so they share the same stretch of wall-clock time and any CPU throttling
- * or background noise hits all of them alike. Redraws an in-place terminal
- * table with each method's round count, latest round time, block-median
- * streak, and (once converged) its average. Writes
- * benchmark/report.json when done. Rendering the HTML report is a separate
- * step - see benchmark/render.php.
+ * Runs the call-shape benchmarks interleaved, round-robin - one round of each
+ * subject in turn, not all of one subject before starting the next - so they
+ * share the same stretch of wall-clock time and any CPU throttling or
+ * background noise hits all of them alike. Redraws an in-place terminal table
+ * with each subject's round count, latest round time, block-median streak, and
+ * (once converged) its converged figure. Writes benchmark/report.json when
+ * done. Rendering the HTML report is a separate step - see
+ * benchmark/render.php.
+ *
+ * What is being measured lives in benchmark/Measured; everything that does the
+ * measuring lives in benchmark/Harness. This file only wires the two together.
  */
 
-require __DIR__ . '/lib.php';
+use Benchmark\Harness\Calibrator;
+use Benchmark\Harness\Convergence;
+use Benchmark\Harness\ConvergenceSettings;
+use Benchmark\Harness\Report;
+use Benchmark\Harness\Tui\LiveTable;
+use Benchmark\Harness\Tui\Row;
+use Benchmark\Measured\CallShapes;
 
-// Windows terminals need VT100 processing turned on explicitly for ANSI
-// cursor movement; POSIX terminals already support it.
-if (function_exists('sapi_windows_vt100_support')) {
-    @\sapi_windows_vt100_support(\STDOUT, true);
-}
+require __DIR__ . '/../vendor/autoload.php';
 
-const ESC = "\x1b";
-
-function moveCursorUp(int $lines): void {
-    if ($lines > 0) {
-        echo ESC . "[{$lines}A";
-    }
-}
-
-function clearLine(): void {
-    echo ESC . "[2K\r";
-}
-
-/**
- * @param array<string, array{rounds: int, iterations: int, lastNs: ?float, blockMedian: ?float, streak: int, stableStreak: int, average: ?float, status: string}> $state
- */
-function renderTable(array $state, string $pattern, string $subject, float $targetRoundSeconds, int $renderedLines): int {
-    $lines = [];
-    $lines[] = "preg_match() call-shape benchmark (live)";
-    $lines[] = "pattern: {$pattern}   subject: {$subject}   target round length: ~" . number_format($targetRoundSeconds, 1) . 's (iterations/round calibrated per method)';
-    $lines[] = "";
-    $lines[] = \sPrintF("%-34s %12s %8s %14s %14s %10s %14s %s", 'method', 'iters/round', 'rounds', 'last (ns)', 'block med (ns)', 'streak', 'avg (ns)', 'status');
-    $lines[] = str_repeat('-', 34 + 1 + 12 + 1 + 8 + 1 + 14 + 1 + 14 + 1 + 10 + 1 + 14 + 1 + 10);
-
-    foreach ($state as $name => $s) {
-        $lines[] = \sPrintF(
-            "%-34s %12s %8d %14s %14s %10s %14s %s",
-            $name,
-            $s['iterations'] > 0 ? number_format($s['iterations']) : 'calibrating',
-            $s['rounds'],
-            $s['lastNs'] !== null ? number_format($s['lastNs'], 1) : '-',
-            $s['blockMedian'] !== null ? number_format($s['blockMedian'], 1) : '-',
-            $s['streak'] > 0 ? "{$s['streak']}/{$s['stableStreak']}" : '-',
-            $s['average'] !== null ? number_format($s['average'], 1) : '-',
-            $s['status'],
-        );
-    }
-
-    if ($renderedLines > 0) {
-        moveCursorUp($renderedLines);
-    }
-    foreach ($lines as $line) {
-        clearLine();
-        echo $line . "\n";
-    }
-
-    return count($lines);
-}
+LiveTable::enableAnsi();
 
 $pattern = '/^[\w.+-]+@[\w-]+\.[\w.]{2,}$/';
 $subject = 'daniel.wilkowski@example.co.uk';
 // Override with BENCH_TARGET_SECONDS=0.05 php benchmark/cli.php for a quick
 // smoke test. 0.5s keeps each round comfortably above scheduler/timer noise
-// while still redrawing the TUI a couple of times a second per method.
-$targetRoundSeconds = (float)(\getEnv('BENCH_TARGET_SECONDS') ?: 0.5);
+// while still redrawing the TUI a couple of times a second per subject.
+$targetRoundSeconds = (float)(getenv('BENCH_TARGET_SECONDS') ?: 0.5);
 
-$methods = benchmarkMethods($pattern, $subject);
+$subjects = CallShapes::all($pattern, $subject);
 
-$state = [];
-foreach (array_keys($methods) as $name) {
-    $state[$name] = [
-        'rounds'       => 0,
-        'iterations'   => 0,
-        'lastNs'       => null,
-        'blockMedian'  => null,
-        'streak'       => 0,
-        'stableStreak' => 0,
-        'average'      => null,
-        'status'       => 'pending',
-    ];
+$table = new LiveTable($pattern, $subject, $targetRoundSeconds, 0.05);
+
+/** @var Row[] $rows */
+$rows = [];
+foreach ($subjects as $measured) {
+    $rows[$measured->name] = Row::pending($measured->name);
 }
+$table->draw($rows);
 
-$renderedLines = 0;
-$lastDrawAt = 0.0;
-$minDrawIntervalSeconds = 0.05;
-
-$redraw = static function () use (&$state, &$renderedLines, $pattern, $subject, $targetRoundSeconds): void {
-    $renderedLines = renderTable($state, $pattern, $subject, $targetRoundSeconds, $renderedLines);
-};
-
-$redraw();
-
-// Calibrate each method's iteration count separately so every round lands
-// near $targetRoundSeconds regardless of how cheap or expensive that
-// method's call shape is - a 50ns function and a slower one shouldn't share
-// one hardcoded iteration count.
-$calibrationSeedIterations = 1000;
-$calibrationMaxIterations = 100_000_000;
+// Calibrate each subject's iteration count separately so every round lands near
+// $targetRoundSeconds regardless of how cheap or expensive that subject's call
+// shape is - a 50ns function and a slower one shouldn't share one hardcoded
+// iteration count.
+$calibrator = new Calibrator($targetRoundSeconds, 1000, 100_000_000);
 
 $iterationsByName = [];
-foreach ($methods as $name => $body) {
-    $state[$name]['status'] = 'calibrating';
-    $redraw();
-
-    $onCalibrationAttempt = function (int $n, float $elapsedSeconds) use (&$state, $name, $redraw): void {
-        $state[$name]['iterations'] = $n;
-        $state[$name]['status'] = \sPrintF('calibrating (%.2fs @ %s iters)', $elapsedSeconds, number_format($n));
-        $redraw();
+foreach ($subjects as $measured) {
+    $onAttempt = static function (int $iterations, float $elapsedSeconds) use (&$rows, $table, $measured): void {
+        $rows[$measured->name] = Row::calibrating($measured->name, $iterations, $elapsedSeconds);
+        $table->draw($rows);
     };
 
-    $iterationsByName[$name] = calibrateIterations(
-        $body,
-        $targetRoundSeconds,
-        $calibrationSeedIterations,
-        $calibrationMaxIterations,
-        $onCalibrationAttempt,
-    );
-
-    $state[$name]['iterations'] = $iterationsByName[$name];
-    $state[$name]['status'] = 'running';
-    $redraw();
+    $iterationsByName[$measured->name] = $calibrator->calibrate($measured->body, $onAttempt);
 }
 
-$window = 20;
-$tolerance = 0.01;
-$stableStreak = 4;
-$maxRounds = 3000;
-$warmup = 10;
+$settings = new ConvergenceSettings(20, 0.01, 4, 3000, 10);
 
+/** @var Convergence[] $convergence */
 $convergence = [];
-foreach (array_keys($methods) as $name) {
-    $convergence[$name] = newConvergenceState($window, $tolerance, $stableStreak, $maxRounds, $warmup);
+foreach ($subjects as $measured) {
+    $convergence[$measured->name] = new Convergence($settings);
+    $rows[$measured->name] = Row::measuring(
+        $measured->name,
+        $iterationsByName[$measured->name],
+        $convergence[$measured->name]->progress(),
+    );
 }
+$table->draw($rows);
 
-// Round-robin: one round of each method per pass, not all of one method
+// Round-robin: one round of each subject per pass, not all of one subject
 // before the next, so they share the same stretch of wall-clock time. Every
-// method keeps taking rounds every pass - even ones already past their own
-// streak - because stepConvergence() re-checks the streak fresh each round;
-// only once ALL of them are converged on the same pass does the run stop.
+// subject keeps taking rounds every pass - even ones already past their own
+// streak - because Convergence re-checks the streak fresh each round; only once
+// ALL of them are converged on the same pass does the run stop.
 $allConverged = false;
 while (!$allConverged) {
     $allConverged = true;
 
-    foreach ($methods as $name => $body) {
-        stepConvergence($convergence[$name], $body, $iterationsByName[$name]);
+    foreach ($subjects as $measured) {
+        $running = $convergence[$measured->name];
+        $running->step($measured->body, $iterationsByName[$measured->name]);
 
-        $c = $convergence[$name];
-        $state[$name]['rounds'] = $c['round'];
-        $state[$name]['lastNs'] = $c['lastNs'];
-        $state[$name]['blockMedian'] = $c['blockMedian'];
-        $state[$name]['streak'] = $c['streak'];
-        $state[$name]['stableStreak'] = $c['stableStreak'];
-        $state[$name]['average'] = $c['average'];
+        $rows[$measured->name] = Row::measuring(
+            $measured->name,
+            $iterationsByName[$measured->name],
+            $running->progress(),
+        );
 
-        if ($c['converged']) {
-            $state[$name]['status'] = 'converged';
-        } else if ($c['warmupRemaining'] > 0) {
-            $state[$name]['status'] = \sPrintF('warmup %d/%d', $c['warmupTotal'] - $c['warmupRemaining'], $c['warmupTotal']);
-        } else {
-            $state[$name]['status'] = 'running';
-        }
-
-        if (!$c['converged']) {
+        if (!$running->isConverged()) {
             $allConverged = false;
         }
 
-        // Redraw after each method's round, not just once per full pass -
-        // each round already takes ~$targetRoundSeconds on its own, so
-        // waiting for all three before redrawing would triple the gap
-        // between visible updates.
-        $now = microtime(true);
-        if ($now - $lastDrawAt >= $minDrawIntervalSeconds) {
-            $lastDrawAt = $now;
-            $redraw();
-        }
-    }
-
-    if ($allConverged) {
-        $redraw();
+        // Redraw after each subject's round, not just once per full pass - each
+        // round already takes ~$targetRoundSeconds on its own, so waiting for
+        // every subject before redrawing would multiply the gap between visible
+        // updates.
+        $table->drawIfDue($rows);
     }
 }
+
+$table->draw($rows);
 
 $results = [];
-foreach (array_keys($methods) as $name) {
-    $results[$name] = [
-        'rounds'     => $convergence[$name]['roundsNs'],
-        'average'    => $convergence[$name]['average'],
-        'roundsRun'  => $convergence[$name]['round'],
-        'iterations' => $iterationsByName[$name],
-    ];
+foreach ($subjects as $measured) {
+    $results[$measured->name] = $convergence[$measured->name]
+        ->result($measured->name, $iterationsByName[$measured->name]);
 }
 
-$output = [
-    'pattern'              => $pattern,
-    'subject'              => $subject,
-    'target_round_seconds' => $targetRoundSeconds,
-    'php_version'          => PHP_VERSION,
-    'generated_at'         => date('c'),
-    'methods'              => $results,
-];
+$report = new Report(
+    $pattern,
+    $subject,
+    $targetRoundSeconds,
+    PHP_VERSION,
+    new DateTimeImmutable(),
+    $results,
+);
 
 $outFile = __DIR__ . '/report.json';
-file_put_contents($outFile, json_encode($output, JSON_PRETTY_PRINT));
+file_put_contents($outFile, $report->toJson());
 
 echo "\nWrote {$outFile}\n";
 echo "Run `php benchmark/render.php` to build the HTML report.\n";

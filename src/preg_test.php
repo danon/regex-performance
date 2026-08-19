@@ -10,7 +10,8 @@
  * preg_match() call, so the per-call type checks are a measurable share of the
  * total cost (~10ns of ~20ns of wrapper overhead). Nothing is validated less
  * strictly: preg_match() itself is typed, so a non-string argument is rejected
- * there instead of being rejected twice. See test/Performance/PerformanceTest.
+ * there instead of being rejected twice. The wrapper is one of the call shapes
+ * the benchmark prices - run `php benchmark/cli.php` to see what it costs.
  *
  * @param string $pattern
  * @param string $subject
