@@ -18,13 +18,20 @@ use JsonException;
 final class Report
 {
     /**
-     * @param MethodResult[] $methods Keyed by subject name, in measurement order.
+     * @param MethodResult[]        $methods Keyed by subject name, in measurement order.
+     * @param array<string, string[]> $groups Group name => the subject names in it, in
+     *        display order. Each group is compared against its own first member rather
+     *        than the report's overall baseline - what a subject belongs to, and what it
+     *        is judged against, is a decision about what is being benchmarked, so it is
+     *        made once by whoever defines the subjects and carried through rather than
+     *        re-inferred from names when the report is rendered.
      */
     public function __construct(
         public readonly float             $targetRoundSeconds,
         public readonly string            $phpVersion,
         public readonly DateTimeImmutable $generatedAt,
         public readonly array             $methods,
+        public readonly array             $groups,
     ) {
     }
 
@@ -42,6 +49,7 @@ final class Report
             'php_version'          => $this->phpVersion,
             'generated_at'         => $this->generatedAt->format('c'),
             'methods'              => $methods,
+            'groups'               => $this->groups,
         ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
     }
 
@@ -61,6 +69,20 @@ final class Report
             $data['php_version'],
             new DateTimeImmutable($data['generated_at']),
             $methods,
+            $data['groups'],
+        );
+    }
+
+    /**
+     * The MethodResult objects belonging to one group, in the group's own
+     * display order.
+     *
+     * @return MethodResult[]
+     */
+    public function methodsInGroup(string $groupName): array {
+        return array_map(
+            fn(string $subjectName): MethodResult => $this->methods[$subjectName],
+            $this->groups[$groupName],
         );
     }
 

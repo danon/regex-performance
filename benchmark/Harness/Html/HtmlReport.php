@@ -19,15 +19,33 @@ final class HtmlReport
     public function render(Report $report, string $name, string $convergenceUri, string $distributionUri): string {
         $baseline = $report->baseline();
 
+        $colors = [];
+        foreach (array_values($report->methods) as $index => $method) {
+            $colors[$method->name] = $this->palette->colorAt($index);
+        }
+
         $rows = '';
-        $index = 0;
-        foreach ($report->methods as $method) {
-            $color = $this->palette->colorAt($index);
-            $row = $method === $baseline
-                ? SummaryRow::baseline($method, $color)
-                : SummaryRow::against($method, $baseline, $color);
-            $rows .= $this->renderRow($row);
-            $index++;
+        foreach (array_keys($report->groups) as $groupName) {
+            $methods = $report->methodsInGroup($groupName);
+            if ($methods === []) {
+                continue;
+            }
+
+            // Each group is compared against its own first member, not the
+            // report's overall baseline: the batched groups exist to show
+            // what checking costs at that batch size, and measuring that
+            // against a single unbatched call would answer a different
+            // question (the cost of the batching itself).
+            $groupBaseline = $methods[0];
+
+            $rows .= $this->renderGroupHeader($groupName);
+            foreach ($methods as $method) {
+                $color = $colors[$method->name];
+                $row = $method === $groupBaseline
+                    ? SummaryRow::baseline($method, $color)
+                    : SummaryRow::against($method, $groupBaseline, $color);
+                $rows .= $this->renderRow($row);
+            }
         }
 
         $title = htmlspecialchars($name);
@@ -90,6 +108,8 @@ final class HtmlReport
         table.data-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
         table.data-table td.num, table.data-table th.num { text-align: right; }
         table.data-table td.num { font-variant-numeric: tabular-nums; }
+        table.data-table tr.group td { padding-top: 18px; padding-bottom: 4px; border-bottom: none; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+        table.data-table tr.group:first-child td { padding-top: 8px; }
         .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
         .meta { color: var(--text-muted); font-size: 11.5px; margin-top: 24px; }
         </style>
@@ -137,6 +157,13 @@ final class HtmlReport
             htmlspecialchars($row->name),
             htmlspecialchars($row->cost),
             htmlspecialchars($row->delta),
+        );
+    }
+
+    private function renderGroupHeader(string $groupName): string {
+        return sprintf(
+            "<tr class=\"group\"><td colspan=\"3\">%s</td></tr>\n",
+            htmlspecialchars($groupName),
         );
     }
 }
