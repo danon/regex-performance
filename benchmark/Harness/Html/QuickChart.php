@@ -12,9 +12,7 @@ use RuntimeException;
  * script in the page, so the report stays a single file that opens with no
  * network access.
  */
-final class QuickChart {
-    private const ENDPOINT = 'http://quickchart.io/chart';
-
+class QuickChart {
     public function __construct(private readonly int $timeoutSeconds) {}
 
     /**
@@ -31,7 +29,7 @@ final class QuickChart {
             'format'           => 'png',
         ], JSON_THROW_ON_ERROR);
 
-        $ch = curl_init(self::ENDPOINT);
+        $ch = curl_init('http://quickchart.io/chart');
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
@@ -43,11 +41,9 @@ final class QuickChart {
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         curl_close($ch);
-
         if ($body === false || $status !== 200) {
             throw new RuntimeException("QuickChart request failed (HTTP {$status}): {$error}");
         }
-
         return $body;
     }
 

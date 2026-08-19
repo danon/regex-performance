@@ -44,22 +44,6 @@ function matchOnce(string $pattern, string $subject): bool {
     return preg_match($pattern, $subject) === 1;
 }
 
-/**
- * The same three times, so matchThrice() minus matchOnce() is two matches and
- * no call overhead at all - which prices a preg_match() from inside userland.
- *
- * The results are collected before they are combined: `&&` would short circuit
- * on a subject that does not match, and only two calls, or one, would actually
- * run.
- */
-function matchThrice(string $pattern, string $subject): bool {
-    $first = preg_match($pattern, $subject) === 1;
-    $second = preg_match($pattern, $subject) === 1;
-    $third = preg_match($pattern, $subject) === 1;
-
-    return $first && $second && $third;
-}
-
 // ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
@@ -139,11 +123,6 @@ $report = $benchmark->measure([
             $matched = matchOnce($pattern, $subject);
         }
     },
-    'matchThrice (3 preg_match calls)' => static function (int $n) use ($pattern, $subject): void {
-        for ($i = 0; $i < $n; $i++) {
-            $matched = matchThrice($pattern, $subject);
-        }
-    },
     // Half the idiom: clearing beforehand, without reading anything back. The
     // gap to the baseline is what error_clear_last() costs on its own.
     'clear error + match'              => static function (int $n) use ($pattern, $subject): void {
@@ -156,7 +135,7 @@ $report = $benchmark->measure([
     'clear + match + read (no error)'  => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             error_clear_last();
-            $matched = preg_match($pattern, $subject) === 1;
+            $matched = @preg_match($pattern, $subject) === 1;
             $error = error_get_last();
         }
     },
@@ -176,6 +155,57 @@ $report = $benchmark->measure([
             error_clear_last();
             $matched = @preg_match($brokenPattern, $subject) === 1;
             $error = error_get_last();
+        }
+    },
+    // The other way of finding out whether preg_match() warned: install a
+    // handler around the call, then put back whatever was there before.
+    //
+    // It costs two calls either side of the match, the same as the idiom above,
+    // but it answers a question the other one cannot. error_get_last() reports
+    // the last error from anywhere, so it cannot tell a warning this call
+    // raised from one left behind earlier - clearing first is what makes it
+    // usable at all. A handler is installed around this call only, so anything
+    // it catches came from this call.
+    //
+    // The closure is built once rather than per iteration, so what is priced
+    // here is set_error_handler() and restore_error_handler() and not the
+    // allocation of a handler. An implementation that builds a fresh closure
+    // per call pays more than this row shows.
+    'set + match + restore (no error)' => static function (int $n) use ($pattern, $subject): void {
+        $error = null;
+        $handler = static function (int $code, string $message) use (&$error): bool {
+            $error = $message;
+            return true;
+        };
+
+        for ($i = 0; $i < $n; $i++) {
+            $error = null;
+            set_error_handler($handler);
+            $matched = preg_match($pattern, $subject) === 1;
+            restore_error_handler();
+        }
+    },
+    // The same, against the pattern that will not compile, so the handler is
+    // actually entered on every iteration.
+    //
+    // Unlike its counterpart above this needs no `@`: a handler that returns
+    // true has already told PHP the warning is dealt with, so nothing is
+    // printed and nothing has to be suppressed. That makes this the one error
+    // row that is directly comparable to its own no-error row - the difference
+    // between the two is the error and nothing else. The failing compile is
+    // still uncached and repeated on every call, the same as the row above.
+    'set + match + restore (error)'    => static function (int $n) use ($brokenPattern, $subject): void {
+        $error = null;
+        $handler = static function (int $code, string $message) use (&$error): bool {
+            $error = $message;
+            return true;
+        };
+
+        for ($i = 0; $i < $n; $i++) {
+            $error = null;
+            set_error_handler($handler);
+            $matched = preg_match($brokenPattern, $subject) === 1;
+            restore_error_handler();
         }
     },
 ]);
