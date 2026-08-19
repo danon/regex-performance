@@ -25,13 +25,17 @@ final class Benchmark
     /**
      * Runs every subject to convergence and returns the result.
      *
-     * @param array<string, callable(int):void> $subjects Name => loop body. Each
-     *        body runs its own loop of $n iterations, so the loop overhead is
-     *        paid identically by every subject and cancels out when they are
-     *        compared. The first one is the baseline the rest are reported
-     *        against.
+     * @param array<string, array<string, callable(int):void>> $groups Group name =>
+     *        subject name => loop body, in display order. Each body runs its own loop
+     *        of $n iterations, so the loop overhead is paid identically by every
+     *        subject and cancels out when they are compared. Within a group, the first
+     *        subject is the baseline the rest of that group are reported against - the
+     *        grouping is carried into the Report rather than flattened away, so the
+     *        renderer does not have to re-derive it.
      */
-    public function measure(array $subjects): Report {
+    public function measure(array $groups): Report {
+        $subjects = array_merge(...array_values($groups));
+
         $measured = [];
         foreach ($subjects as $name => $body) {
             $measured[] = new Subject($name, Closure::fromCallable($body));
@@ -50,11 +54,17 @@ final class Benchmark
                 ->result($subject->name, $iterations[$subject->name]);
         }
 
+        $groupNames = array_map(
+            static fn(array $group): array => array_keys($group),
+            $groups,
+        );
+
         return new Report(
             $this->calibrator->targetSeconds,
             PHP_VERSION,
             new DateTimeImmutable(),
             $results,
+            $groupNames,
         );
     }
 
