@@ -68,7 +68,7 @@ final class Reports
      * not ask for.
      */
     private function validate(string $name): string {
-        if (preg_test('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $name)) {
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $name) === 1) {
             return $name;
         }
 

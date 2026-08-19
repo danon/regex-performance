@@ -31,12 +31,15 @@ require __DIR__ . '/../vendor/autoload.php';
 // ---------------------------------------------------------------------------
 // The call shapes under benchmark.
 //
-// Global functions, not methods, because that is the shape preg_test() has: a
-// static method call and a plain function call do not cost the same, and the
-// difference is a visible share of what is being measured here.
+// Global functions, not methods: a static method call and a plain function call
+// do not cost the same, and the difference is a visible share of what is being
+// measured here.
 // ---------------------------------------------------------------------------
 
-/** One preg_match() behind one userland call - the same shape as preg_test(). */
+/**
+ * One preg_match() behind one userland call, so matchOnce() minus the inline
+ * baseline is the price of a userland call and nothing else.
+ */
 function matchOnce(string $pattern, string $subject): bool {
     return preg_match($pattern, $subject) === 1;
 }
@@ -102,18 +105,13 @@ $convergence = $quick
 $benchmark = new Benchmark(new CliInterface($name), $calibrator, $convergence);
 
 // Baseline first - every other method is reported against it. Each body assigns
-// its result to a variable that is never read, identically in all four:
+// its result to a variable that is never read, identically in all three:
 // dropping the assignment in some and not others would compare loops that do
 // different amounts of work.
 $report = $benchmark->measure([
     'plain (inline preg_match)'        => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, $subject) === 1;
-        }
-    },
-    'preg_test (library wrapper)'      => static function (int $n) use ($pattern, $subject): void {
-        for ($i = 0; $i < $n; $i++) {
-            $matched = preg_test($pattern, $subject);
         }
     },
     'matchOnce (1 preg_match call)'    => static function (int $n) use ($pattern, $subject): void {

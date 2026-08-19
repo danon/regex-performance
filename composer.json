@@ -1,10 +1,5 @@
 {
   "autoload": {
-    "files": [
-      "src/preg_test.php"
-    ]
-  },
-  "autoload-dev": {
     "psr-4": {
       "Benchmark\\": "benchmark/"
     }
