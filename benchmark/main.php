@@ -129,6 +129,16 @@ $subjects = [
             $matched = preg_match($pattern, $subject) === 1;
         }
     },
+    // The same shape, against the pattern that will not compile. No error is
+    // read back here - nothing clears or checks it - so the gap to the
+    // baseline is purely the cost of a failing, uncached compile on every
+    // call. The warning still has to be suppressed with `@`, or it would
+    // print on every iteration of every round.
+    'preg_match() inline (error)'      => static function (int $n) use ($brokenPattern, $subject): void {
+        for ($i = 0; $i < $n; $i++) {
+            $matched = @preg_match($brokenPattern, $subject) === 1;
+        }
+    },
     // Nothing to scan, so this is the floor: what a preg_match() costs before
     // any of the subject has been looked at. The gap to the baseline is what
     // matching those 30 characters actually costs.
