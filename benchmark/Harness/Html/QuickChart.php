@@ -12,12 +12,10 @@ use RuntimeException;
  * script in the page, so the report stays a single file that opens with no
  * network access.
  */
-final class QuickChart
-{
-    private const ENDPOINT = 'https://quickchart.io/chart';
+final class QuickChart {
+    private const ENDPOINT = 'http://quickchart.io/chart';
 
-    public function __construct(private readonly int $timeoutSeconds) {
-    }
+    public function __construct(private readonly int $timeoutSeconds) {}
 
     /**
      * @param array<string, mixed> $chartConfig
