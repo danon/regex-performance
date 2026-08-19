@@ -7,7 +7,11 @@
  * only place that says what those bodies do. Adding or changing a call shape
  * means editing this file and nothing else.
  *
- *   php benchmark/main.php [report-name]
+ *   php benchmark/main.php [--quick|--full] [report-name]
+ *
+ * --full (the default) measures until the timings settle; --quick trades that
+ * accuracy for a run that finishes in seconds, which is what you want while
+ * changing the call shapes above or the harness itself.
  *
  * The report is written to benchmark/reports/<report-name>.json, so runs can be
  * kept side by side - before and after a change, one PHP version and the next -
@@ -57,21 +61,45 @@ function matchThrice(string $pattern, string $subject): bool {
 // The run.
 // ---------------------------------------------------------------------------
 
-$name = $argv[1] ?? 'preg-match-call-shapes';
+$options = [];
+$positional = [];
+
+foreach (array_slice($argv, 1) as $arg) {
+    if (str_starts_with($arg, '--')) {
+        $options[] = $arg;
+    } else {
+        $positional[] = $arg;
+    }
+}
+
+$unknown = array_diff($options, ['--quick', '--full']);
+if ($unknown !== []) {
+    fwrite(STDERR, "Unknown option: " . implode(' ', $unknown) . "\n");
+    fwrite(STDERR, "Usage: php benchmark/main.php [--quick|--full] [report-name]\n");
+    exit(1);
+}
+
+$quick = in_array('--quick', $options, true);
+$name = $positional[0] ?? 'preg-match-call-shapes';
 
 $pattern = '/^[\w.+-]+@[\w-]+\.[\w.]{2,}$/';
 $subject = 'daniel.wilkowski@example.co.uk';
 
-// Override with BENCH_TARGET_SECONDS=0.05 php benchmark/main.php for a quick
-// smoke test. 0.5s keeps each round comfortably above scheduler/timer noise
-// while still redrawing the table a couple of times a second per method.
-$targetRoundSeconds = (float)(getenv('BENCH_TARGET_SECONDS') ?: 0.5);
+// A full round of 0.5s stays comfortably above scheduler/timer noise while
+// still redrawing the table a couple of times a second per method. A quick
+// round is short enough that the noise it lets through is real - it is there to
+// prove the run works end to end, not to be quoted.
+$calibrator = $quick
+    ? new Calibrator(0.05, 1_000, 100_000_000)
+    : new Calibrator(0.5, 1_000, 100_000_000);
 
-$benchmark = new Benchmark(
-    new CliInterface($name),
-    new Calibrator($targetRoundSeconds, 1_000, 100_000_000),
-    new ConvergenceSettings(20, 0.01, 4, 3_000, 10),
-);
+// Quick mode also stops asking for as much agreement: shorter blocks, a looser
+// tolerance, a shorter streak, and a cap low enough to bound the whole run.
+$convergence = $quick
+    ? new ConvergenceSettings(5, 0.05, 2, 60, 3)
+    : new ConvergenceSettings(20, 0.01, 4, 3_000, 10);
+
+$benchmark = new Benchmark(new CliInterface($name), $calibrator, $convergence);
 
 // Baseline first - every other method is reported against it. Each body assigns
 // its result to a variable that is never read, identically in all four:
