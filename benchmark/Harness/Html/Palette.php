@@ -19,10 +19,12 @@ final class Palette {
         '#c08a00', // amber
         '#c2529b', // magenta
         // The vivid hues are used up by here, so the rest are told apart by
-        // being darker and duller rather than by hue alone - a tenth vivid
-        // colour would only be mistaken for one of the nine above it.
+        // being darker and duller rather than by hue alone - a ninth vivid
+        // colour would only be mistaken for one of the eight above it.
         '#5c6f82', // slate
         '#7f4f24', // brown
+        '#6b7a1f', // olive
+        '#3d3d5c', // indigo
     ];
 
     public function colorAt(int $index): string {

@@ -124,7 +124,7 @@ $preset = match ($mode) {
 // true stops error_get_last() being populated at all, which is the very thing
 // being read.
 $subjects = [
-    'plain (inline preg_match)'        => static function (int $n) use ($pattern, $subject): void {
+    'preg_match() inline'              => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, $subject) === 1;
         }
@@ -132,19 +132,27 @@ $subjects = [
     // Nothing to scan, so this is the floor: what a preg_match() costs before
     // any of the subject has been looked at. The gap to the baseline is what
     // matching those 30 characters actually costs.
-    'plain (empty subject)'            => static function (int $n) use ($pattern): void {
+    'preg_match(empty)'                => static function (int $n) use ($pattern): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, '') === 1;
         }
     },
-    'matchOnce (1 preg_match call)'    => static function (int $n) use ($pattern, $subject): void {
+    // Emptier still: nothing to compile and nothing to scan. Whatever this
+    // costs is what preg_match() charges for being called at all, and no
+    // pattern or subject can bring it below.
+    'preg_match(//, empty)'            => static function (int $n): void {
+        for ($i = 0; $i < $n; $i++) {
+            $matched = preg_match('//', '') === 1;
+        }
+    },
+    'preg_match(subject)'              => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = matchOnce($pattern, $subject);
         }
     },
     // Half the idiom: clearing beforehand, without reading anything back. The
     // gap to the baseline is what error_clear_last() costs on its own.
-    'clear error + match'              => static function (int $n) use ($pattern, $subject): void {
+    'clear + match'                    => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             error_clear_last();
             $matched = preg_match($pattern, $subject) === 1;
@@ -225,6 +233,51 @@ $subjects = [
             set_error_handler($handler);
             $matched = preg_match($brokenPattern, $subject) === 1;
             restore_error_handler();
+        }
+    },
+    // Checking in batches instead of per call: install the handler once, run
+    // fifty matches under it, ask preg_last_error() whether PCRE itself gave up
+    // - on a backtrack or recursion limit, which a warning would not tell you
+    // about - and put the old handler back.
+    //
+    // This is what the per-call rows above look like when the price of checking
+    // is spread over fifty calls rather than paid on every one, so it is still
+    // reported per match: the outer loop runs a fiftieth as many times, and the
+    // inner one restores the count. A remainder of fewer than fifty matches is
+    // dropped, which at the iteration counts these run at is under a hundredth
+    // of a percent.
+    '50x match + handler + lastError'  => static function (int $n) use ($pattern, $subject): void {
+        $error = null;
+        $handler = static function (int $code, string $message) use (&$error): bool {
+            $error = $message;
+
+            return true;
+        };
+
+        $batches = intdiv($n, 50);
+        for ($batch = 0; $batch < $batches; $batch++) {
+            $error = null;
+            set_error_handler($handler);
+
+            for ($i = 0; $i < 50; $i++) {
+                $matched = preg_match($pattern, $subject) === 1;
+            }
+
+            $failure = preg_last_error();
+            restore_error_handler();
+        }
+    },
+    // The same batching with nothing checked at all - no handler, no
+    // preg_last_error() - so the pair differs by exactly the checking. It also
+    // doubles as a control on the batching itself: the nested loop should cost
+    // what the flat baseline costs, and a gap between them would mean the shape
+    // of the loop is being measured rather than the work inside it.
+    '50x match, unchecked'             => static function (int $n) use ($pattern, $subject): void {
+        $batches = intdiv($n, 50);
+        for ($batch = 0; $batch < $batches; $batch++) {
+            for ($i = 0; $i < 50; $i++) {
+                $matched = preg_match($pattern, $subject) === 1;
+            }
         }
     },
 ];
