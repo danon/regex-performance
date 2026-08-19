@@ -1,5 +1,5 @@
 <?php
-namespace Benchmark\Harness\Tui;
+namespace Benchmark\Harness\Ui;
 
 use Benchmark\Harness\Progress;
 

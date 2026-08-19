@@ -16,7 +16,7 @@ final class HtmlReport
     public function __construct(private readonly Palette $palette) {
     }
 
-    public function render(Report $report, string $convergenceUri, string $distributionUri): string {
+    public function render(Report $report, string $name, string $convergenceUri, string $distributionUri): string {
         $baseline = $report->baseline();
 
         $rows = '';
@@ -30,8 +30,7 @@ final class HtmlReport
             $index++;
         }
 
-        $pattern = htmlspecialchars($report->pattern);
-        $subject = htmlspecialchars($report->subject);
+        $title = htmlspecialchars($name);
         $phpVersion = htmlspecialchars($report->phpVersion);
         $generatedAt = htmlspecialchars($report->generatedAt->format('Y-m-d H:i:s'));
         $targetRoundSeconds = number_format($report->targetRoundSeconds, 1);
@@ -42,7 +41,7 @@ final class HtmlReport
         <html lang="en">
         <head>
         <meta charset="utf-8">
-        <title>preg_match Call-Shape Benchmark</title>
+        <title>{$title} benchmark</title>
         <style>
         :root {
           color-scheme: light dark;
@@ -97,8 +96,8 @@ final class HtmlReport
         </head>
         <body>
         <div class="wrap">
-          <h1>preg_match() call-shape benchmark</h1>
-          <p class="subtitle">Pattern <code>{$pattern}</code> against <code>{$subject}</code>. Each method's iteration count was calibrated so a round takes roughly {$targetRoundSeconds}s, then rounds ran until every method's block median had stopped moving.</p>
+          <h1>{$title}</h1>
+          <p class="subtitle">Each method's iteration count was calibrated so a round takes roughly {$targetRoundSeconds}s, then rounds ran until every method's block median had stopped moving.</p>
 
           <div class="card">
             <h2>Converged cost per operation</h2>

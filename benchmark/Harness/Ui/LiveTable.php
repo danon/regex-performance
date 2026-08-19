@@ -1,25 +1,29 @@
 <?php
-namespace Benchmark\Harness\Tui;
+namespace Benchmark\Harness\Ui;
 
 /**
  * An in-place terminal table, redrawn by moving the cursor back over the lines
  * it printed last time.
  *
- * Holds nothing about the benchmark itself beyond the header it prints - it is
- * handed a fresh set of rows and draws them.
+ * Knows nothing about the benchmark beyond the title it prints - it is handed a
+ * fresh set of rows and draws them.
  */
 final class LiveTable
 {
     private const ESC = "\x1b";
 
+    /**
+     * A round already takes about as long as the target round length, so
+     * redrawing faster than this only costs terminal writes.
+     */
+    private const MIN_DRAW_INTERVAL_SECONDS = 0.05;
+
     private int $renderedLines = 0;
     private float $lastDrawAt = 0.0;
 
     public function __construct(
-        private readonly string $pattern,
-        private readonly string $subject,
+        private readonly string $title,
         private readonly float  $targetRoundSeconds,
-        private readonly float  $minDrawIntervalSeconds,
     ) {
     }
 
@@ -58,7 +62,7 @@ final class LiveTable
      * @param Row[] $rows
      */
     public function drawIfDue(array $rows): void {
-        if (microtime(true) - $this->lastDrawAt < $this->minDrawIntervalSeconds) {
+        if (microtime(true) - $this->lastDrawAt < self::MIN_DRAW_INTERVAL_SECONDS) {
             return;
         }
 
@@ -71,9 +75,9 @@ final class LiveTable
      */
     private function format(array $rows): array {
         $lines = [];
-        $lines[] = 'preg_match() call-shape benchmark (live)';
-        $lines[] = "pattern: {$this->pattern}   subject: {$this->subject}   target round length: ~"
-            . number_format($this->targetRoundSeconds, 1)
+        $lines[] = "{$this->title} (live)";
+        $lines[] = 'target round length: ~'
+            . number_format($this->targetRoundSeconds, 2)
             . 's (iterations/round calibrated per method)';
         $lines[] = '';
         $lines[] = sprintf(

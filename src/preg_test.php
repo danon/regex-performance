@@ -11,7 +11,7 @@
  * total cost (~10ns of ~20ns of wrapper overhead). Nothing is validated less
  * strictly: preg_match() itself is typed, so a non-string argument is rejected
  * there instead of being rejected twice. The wrapper is one of the call shapes
- * the benchmark prices - run `php benchmark/cli.php` to see what it costs.
+ * the benchmark prices - run `php benchmark/main.php` to see what it costs.
  *
  * @param string $pattern
  * @param string $subject
