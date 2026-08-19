@@ -67,20 +67,33 @@ function timeRound(callable $body, int $iterations): float {
  * round duration is ~linear in iteration count once JIT/opcode-cache
  * effects have settled during doubling.
  *
+ * $onAttempt, if not null, is called after every doubling round with the
+ * iteration count and elapsed seconds just measured, so a caller can show
+ * progress instead of appearing to hang - each attempt round can itself
+ * take up to $targetSeconds with nothing else happening in between.
+ *
  * @param callable(int):void $body
+ * @param null|callable(int $iterations, float $elapsedSeconds):void $onAttempt
  */
 function calibrateIterations(
-    callable $body,
-    float    $targetSeconds,
-    int      $seedIterations,
-    int      $maxIterations
+    callable  $body,
+    float     $targetSeconds,
+    int       $seedIterations,
+    int       $maxIterations,
+    ?callable $onAttempt
 ): int {
     $n = $seedIterations;
     $elapsed = timeRound($body, $n);
+    if ($onAttempt !== null) {
+        $onAttempt($n, $elapsed);
+    }
 
     while ($elapsed < $targetSeconds && $n < $maxIterations) {
         $n = min($n * 2, $maxIterations);
         $elapsed = timeRound($body, $n);
+        if ($onAttempt !== null) {
+            $onAttempt($n, $elapsed);
+        }
     }
 
     if ($elapsed <= 0.0) {
@@ -110,7 +123,7 @@ function median(array $values): float {
  * next.
  *
  * @return array{
- *   warmupRemaining: int, roundsNs: float[], prevBlockMedian: ?float,
+ *   warmupRemaining: int, warmupTotal: int, roundsNs: float[], prevBlockMedian: ?float,
  *   streak: int, round: int, lastNs: ?float, blockMedian: ?float,
  *   converged: bool, average: ?float,
  *   window: int, tolerance: float, stableStreak: int, maxRounds: int,
@@ -125,6 +138,7 @@ function newConvergenceState(
 ): array {
     return [
         'warmupRemaining' => $warmup,
+        'warmupTotal'     => $warmup,
         'roundsNs'        => [],
         'prevBlockMedian' => null,
         'streak'          => 0,
@@ -178,7 +192,8 @@ function stepConvergence(array &$state, callable $body, int $iterations): void {
     }
 
     if ($state['warmupRemaining'] > 0) {
-        timeRound($body, $iterations);
+        $seconds = timeRound($body, $iterations);
+        $state['lastNs'] = ($seconds / $iterations) * 1e9;
         $state['warmupRemaining']--;
         return;
     }

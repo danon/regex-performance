@@ -71,8 +71,9 @@ function renderTable(array $state, string $pattern, string $subject, float $targ
 $pattern = '/^[\w.+-]+@[\w-]+\.[\w.]{2,}$/';
 $subject = 'daniel.wilkowski@example.co.uk';
 // Override with BENCH_TARGET_SECONDS=0.05 php benchmark/cli.php for a quick
-// smoke test; the real benchmark should use the ~1s default.
-$targetRoundSeconds = (float) (getenv('BENCH_TARGET_SECONDS') ?: 1.0);
+// smoke test. 0.5s keeps each round comfortably above scheduler/timer noise
+// while still redrawing the TUI a couple of times a second per method.
+$targetRoundSeconds = (float) (getenv('BENCH_TARGET_SECONDS') ?: 0.5);
 
 $methods = benchmarkMethods($pattern, $subject);
 
@@ -112,11 +113,18 @@ foreach ($methods as $name => $body) {
     $state[$name]['status'] = 'calibrating';
     $redraw();
 
+    $onCalibrationAttempt = function (int $n, float $elapsedSeconds) use (&$state, $name, $redraw): void {
+        $state[$name]['iterations'] = $n;
+        $state[$name]['status'] = sprintf('calibrating (%.2fs @ %s iters)', $elapsedSeconds, number_format($n));
+        $redraw();
+    };
+
     $iterationsByName[$name] = calibrateIterations(
         $body,
         $targetRoundSeconds,
         $calibrationSeedIterations,
-        $calibrationMaxIterations
+        $calibrationMaxIterations,
+        $onCalibrationAttempt
     );
 
     $state[$name]['iterations'] = $iterationsByName[$name];
@@ -153,17 +161,32 @@ while (!$allConverged) {
         $state[$name]['blockMedian'] = $c['blockMedian'];
         $state[$name]['streak'] = $c['streak'];
         $state[$name]['stableStreak'] = $c['stableStreak'];
-        $state[$name]['status'] = $c['converged'] ? 'converged' : 'running';
         $state[$name]['average'] = $c['average'];
+
+        if ($c['converged']) {
+            $state[$name]['status'] = 'converged';
+        } elseif ($c['warmupRemaining'] > 0) {
+            $state[$name]['status'] = sprintf('warmup %d/%d', $c['warmupTotal'] - $c['warmupRemaining'], $c['warmupTotal']);
+        } else {
+            $state[$name]['status'] = 'running';
+        }
 
         if (!$c['converged']) {
             $allConverged = false;
         }
+
+        // Redraw after each method's round, not just once per full pass -
+        // each round already takes ~$targetRoundSeconds on its own, so
+        // waiting for all three before redrawing would triple the gap
+        // between visible updates.
+        $now = microtime(true);
+        if ($now - $lastDrawAt >= $minDrawIntervalSeconds) {
+            $lastDrawAt = $now;
+            $redraw();
+        }
     }
 
-    $now = microtime(true);
-    if ($now - $lastDrawAt >= $minDrawIntervalSeconds || $allConverged) {
-        $lastDrawAt = $now;
+    if ($allConverged) {
         $redraw();
     }
 }

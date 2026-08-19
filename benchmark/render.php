@@ -59,33 +59,6 @@ function toDataUri(string $pngBytes): string {
     return 'data:image/png;base64,' . base64_encode($pngBytes);
 }
 
-// ---------- Bar chart: converged average ns/op per method ----------
-$barChart = [
-    'type' => 'bar',
-    'data' => [
-        'labels'   => $methodNames,
-        'datasets' => [[
-            'label'           => 'ns/op',
-            'data'            => array_map(static fn($m) => round($data['methods'][$m]['average'], 1), $methodNames),
-            'backgroundColor' => $seriesColors,
-        ]],
-    ],
-    'options' => [
-        'plugins' => [
-            'legend' => ['display' => false],
-            'title'  => ['display' => true, 'text' => 'Converged cost per operation (ns/op)'],
-            'datalabels' => [
-                'anchor' => 'end',
-                'align'  => 'top',
-                'font'   => ['weight' => 'bold'],
-            ],
-        ],
-        'scales' => [
-            'y' => ['title' => ['display' => true, 'text' => 'ns/op'], 'beginAtZero' => true],
-        ],
-    ],
-];
-
 // ---------- Line chart: round-by-round convergence per method ----------
 // QuickChart's free tier caps total chart data points (~500), so downsample
 // each method's rounds to that budget by taking every Nth round rather than
@@ -137,87 +110,107 @@ $lineChart = [
 
 // ---------- Histogram charts: distribution of converged round timings ----------
 /**
+ * Bins values into pre-defined bin edges (shared across methods so their
+ * histograms line up on one chart).
+ *
  * @param float[] $values
- * @return array{labels: string[], counts: int[]}
+ * @param float[] $edges bin boundaries, length $binCount + 1
+ * @return int[]
  */
-function histogram(array $values, int $binCount): array {
-    $min = min($values);
-    $max = max($values);
-    $width = ($max - $min) / $binCount;
-    if ($width <= 0.0) {
-        return ['labels' => [number_format($min, 1)], 'counts' => [count($values)]];
-    }
-
+function histogramWithEdges(array $values, array $edges): array {
+    $binCount = count($edges) - 1;
     $counts = array_fill(0, $binCount, 0);
     foreach ($values as $v) {
-        $bin = (int) floor(($v - $min) / $width);
-        $bin = min($bin, $binCount - 1);
+        $bin = $binCount - 1;
+        for ($i = 0; $i < $binCount; $i++) {
+            if ($v < $edges[$i + 1] || $i === $binCount - 1) {
+                $bin = $i;
+                break;
+            }
+        }
         $counts[$bin]++;
     }
-
-    $labels = [];
-    for ($i = 0; $i < $binCount; $i++) {
-        $labels[] = number_format($min + $i * $width, 1);
-    }
-
-    return ['labels' => $labels, 'counts' => $counts];
+    return $counts;
 }
 
-$histogramCharts = [];
-foreach ($methodNames as $i => $name) {
+$histogramTails = [];
+foreach ($methodNames as $name) {
     $rounds = $data['methods'][$name]['rounds'];
-    $tail = array_slice($rounds, -min(100, count($rounds)));
-    $hist = histogram($tail, 20);
+    $histogramTails[$name] = array_slice($rounds, -min(100, count($rounds)));
+}
 
-    $histogramCharts[$name] = [
-        'type' => 'bar',
-        'data' => [
-            'labels'   => $hist['labels'],
-            'datasets' => [[
-                'label'           => $name,
-                'data'            => $hist['counts'],
-                'backgroundColor' => $seriesColors[$i % count($seriesColors)],
-                'barPercentage'   => 1.0,
-                'categoryPercentage' => 1.0,
-            ]],
-        ],
-        'options' => [
-            'plugins' => [
-                'legend' => ['display' => false],
-                'title'  => ['display' => true, 'text' => $name],
-            ],
-            'scales' => [
-                'x' => ['title' => ['display' => true, 'text' => 'ns/op'], 'ticks' => ['maxTicksLimit' => 10]],
-                'y' => ['title' => ['display' => true, 'text' => 'rounds'], 'beginAtZero' => true],
-            ],
-        ],
+$binCount = 20;
+$allValues = array_merge(...array_values($histogramTails));
+$min = min($allValues);
+$max = max($allValues);
+$binWidth = ($max - $min) / $binCount;
+
+if ($binWidth <= 0.0) {
+    $edges = [$min, $min + 1];
+    $binCount = 1;
+} else {
+    $edges = [];
+    for ($i = 0; $i <= $binCount; $i++) {
+        $edges[] = $min + $i * $binWidth;
+    }
+}
+
+$histogramLabels = [];
+for ($i = 0; $i < $binCount; $i++) {
+    $histogramLabels[] = number_format($edges[$i], 1);
+}
+
+$histogramDatasets = [];
+foreach ($methodNames as $i => $name) {
+    $histogramDatasets[] = [
+        'label'           => $name,
+        'data'            => histogramWithEdges($histogramTails[$name], $edges),
+        'backgroundColor' => $seriesColors[$i % count($seriesColors)],
+        'barPercentage'   => 0.9,
+        'categoryPercentage' => 0.9,
     ];
 }
 
-fwrite(STDERR, "Rendering bar chart via QuickChart...\n");
-$barPng = renderChart($barChart, 900, 420);
+$histogramChart = [
+    'type' => 'bar',
+    'data' => [
+        'labels'   => $histogramLabels,
+        'datasets' => $histogramDatasets,
+    ],
+    'options' => [
+        'plugins' => [
+            'legend' => ['display' => true, 'position' => 'top'],
+            'title'  => ['display' => true, 'text' => 'Distribution of round timings'],
+        ],
+        'scales' => [
+            'x' => ['title' => ['display' => true, 'text' => 'ns/op'], 'ticks' => ['maxTicksLimit' => 10]],
+            'y' => ['title' => ['display' => true, 'text' => 'rounds'], 'beginAtZero' => true],
+        ],
+    ],
+];
 
 fwrite(STDERR, "Rendering line chart via QuickChart...\n");
 $linePng = renderChart($lineChart, 900, 480);
 
-$histogramDataUris = [];
-foreach ($histogramCharts as $name => $config) {
-    fwrite(STDERR, "Rendering histogram chart for {$name} via QuickChart...\n");
-    $histogramDataUris[$name] = toDataUri(renderChart($config, 900, 280));
-}
+fwrite(STDERR, "Rendering histogram chart via QuickChart...\n");
+$histogramPng = renderChart($histogramChart, 900, 420);
 
 // ---------- Summary table ----------
 $baseline = $data['methods'][$methodNames[0]]['average'];
+$roundsToConverge = $data['methods'][$methodNames[0]]['roundsRun'];
 $tableRows = '';
 foreach ($methodNames as $i => $name) {
     $m = $data['methods'][$name];
     $delta = $i === 0 ? '—' : sprintf('%+.0f%%', ($m['average'] / $baseline - 1) * 100);
+    $cost = $i === 0
+        ? number_format($m['average'], 0) . ' ns'
+        : sprintf('%s ns + %s ns', number_format($baseline, 0), number_format($m['average'] - $baseline, 0));
     $tableRows .= sprintf(
-        "<tr><td><span class=\"swatch\" style=\"background:%s\"></span>%s</td><td class=\"num\">%s</td><td class=\"num\">%d</td><td class=\"num\">%.1f</td><td class=\"num\">%s</td></tr>\n",
+        "<tr><td><span class=\"swatch\" style=\"background:%s\"></span>%s</td><td>%s</td><td class=\"num\">%s</td><td class=\"num\">%.1f</td><td class=\"num\">%s</td></tr>\n",
         htmlspecialchars($seriesColors[$i % count($seriesColors)]),
         htmlspecialchars($name),
+        htmlspecialchars($cost),
         number_format($m['iterations']),
-        $m['roundsRun'],
         $m['average'],
         htmlspecialchars($delta)
     );
@@ -227,17 +220,8 @@ $generatedAt = htmlspecialchars((new DateTimeImmutable($data['generated_at']))->
 $pattern = htmlspecialchars($data['pattern']);
 $targetRoundSeconds = number_format($data['target_round_seconds'], 1);
 $phpVersion = htmlspecialchars($data['php_version']);
-$barDataUri = toDataUri($barPng);
 $lineDataUri = toDataUri($linePng);
-
-$histogramImages = '';
-foreach ($histogramDataUris as $name => $dataUri) {
-    $histogramImages .= sprintf(
-        "    <img src=\"%s\" alt=\"Histogram of round timings for %s\" style=\"margin-bottom:16px\">\n",
-        $dataUri,
-        htmlspecialchars($name)
-    );
-}
+$histogramDataUri = toDataUri($histogramPng);
 
 $html = <<<HTML
 <!doctype html>
@@ -291,7 +275,8 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
 table.data-table th, table.data-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); }
 table.data-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
-table.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.data-table td.num, table.data-table th.num { text-align: right; }
+table.data-table td.num { font-variant-numeric: tabular-nums; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
 .meta { color: var(--text-muted); font-size: 11.5px; margin-top: 24px; }
 </style>
@@ -303,8 +288,14 @@ table.data-table td.num { text-align: right; font-variant-numeric: tabular-nums;
 
   <div class="card">
     <h2>Converged cost per operation</h2>
-    <p class="desc">Median of the tail rounds, once each method's noise floor was reached.</p>
-    <img src="{$barDataUri}" alt="Bar chart of converged ns/op per method">
+    <p class="desc">Median of the tail rounds, once each method's noise floor was reached, {$roundsToConverge} rounds to converge across all methods. Costs beyond the baseline are shown as baseline + added cost.</p>
+    <table class="data-table">
+      <thead>
+        <tr><th>Method</th><th>Cost</th><th class="num">Iterations</th><th class="num">ns/op</th><th class="num">vs. base</th></tr>
+      </thead>
+      <tbody>
+{$tableRows}      </tbody>
+    </table>
   </div>
 
   <div class="card">
@@ -316,17 +307,7 @@ table.data-table td.num { text-align: right; font-variant-numeric: tabular-nums;
   <div class="card">
     <h2>Distribution of round timings</h2>
     <p class="desc">Histogram of ns/op across each method's last 100 (or fewer) rounds, once it had converged. Shows the spread and shape (e.g. GC/scheduler outliers) behind the summary averages.</p>
-{$histogramImages}  </div>
-
-  <div class="card">
-    <h2>Summary</h2>
-    <table class="data-table">
-      <thead>
-        <tr><th>Method</th><th class="num">Iterations/round</th><th class="num">Rounds to converge</th><th class="num">ns/op</th><th class="num">vs. plain preg_match</th></tr>
-      </thead>
-      <tbody>
-{$tableRows}      </tbody>
-    </table>
+    <img src="{$histogramDataUri}" alt="Histogram of round timings per method">
   </div>
 
   <p class="meta">PHP {$phpVersion} &middot; generated {$generatedAt} &middot; ~{$targetRoundSeconds}s/round target &middot; charts rendered by quickchart.io</p>
