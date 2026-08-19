@@ -140,7 +140,7 @@ $lineChart = [
  * @param float[] $values
  * @return array{labels: string[], counts: int[]}
  */
-function histogram(array $values, int $binCount = 20): array {
+function histogram(array $values, int $binCount): array {
     $min = min($values);
     $max = max($values);
     $width = ($max - $min) / $binCount;
@@ -167,7 +167,7 @@ $histogramCharts = [];
 foreach ($methodNames as $i => $name) {
     $rounds = $data['methods'][$name]['rounds'];
     $tail = array_slice($rounds, -min(100, count($rounds)));
-    $hist = histogram($tail);
+    $hist = histogram($tail, 20);
 
     $histogramCharts[$name] = [
         'type' => 'bar',

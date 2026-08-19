@@ -6,11 +6,11 @@
 
 require __DIR__ . '/../src/preg_test.php';
 
-function matchOnce($pattern, $subject) {
+function matchOnce(string $pattern, string $subject): bool {
     return preg_match($pattern, $subject) === 1;
 }
 
-function matchThrice($pattern, $subject) {
+function matchThrice(string $pattern, string $subject): bool {
     $first = preg_match($pattern, $subject) === 1;
     $second = preg_match($pattern, $subject) === 1;
     $third = preg_match($pattern, $subject) === 1;
@@ -71,9 +71,9 @@ function timeRound(callable $body, int $iterations): float {
  */
 function calibrateIterations(
     callable $body,
-    float    $targetSeconds = 1.0,
-    int      $seedIterations = 1000,
-    int      $maxIterations = 100_000_000
+    float    $targetSeconds,
+    int      $seedIterations,
+    int      $maxIterations
 ): int {
     $n = $seedIterations;
     $elapsed = timeRound($body, $n);
@@ -117,11 +117,11 @@ function median(array $values): float {
  * }
  */
 function newConvergenceState(
-    int   $window = 20,
-    float $tolerance = 0.01,
-    int   $stableStreak = 10,
-    int   $maxRounds = 3000,
-    int   $warmup = 10
+    int   $window,
+    float $tolerance,
+    int   $stableStreak,
+    int   $maxRounds,
+    int   $warmup
 ): array {
     return [
         'warmupRemaining' => $warmup,

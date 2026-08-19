@@ -104,12 +104,20 @@ $redraw();
 // near $targetRoundSeconds regardless of how cheap or expensive that
 // method's call shape is - a 50ns function and a slower one shouldn't share
 // one hardcoded iteration count.
+$calibrationSeedIterations = 1000;
+$calibrationMaxIterations = 100_000_000;
+
 $iterationsByName = [];
 foreach ($methods as $name => $body) {
     $state[$name]['status'] = 'calibrating';
     $redraw();
 
-    $iterationsByName[$name] = calibrateIterations($body, $targetRoundSeconds);
+    $iterationsByName[$name] = calibrateIterations(
+        $body,
+        $targetRoundSeconds,
+        $calibrationSeedIterations,
+        $calibrationMaxIterations
+    );
 
     $state[$name]['iterations'] = $iterationsByName[$name];
     $state[$name]['status'] = 'running';
