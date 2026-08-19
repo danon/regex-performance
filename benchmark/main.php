@@ -179,6 +179,15 @@ $subjects = [
             $matched = preg_match($pattern, $subject) === 1;
         }
     },
+    // The same inline call, batched: $n is now the number of batches the
+    // harness runs, not the number of matches, so the reported ns/op is the
+    // cost of 50 (or 2000) matches back to back rather than one. It should
+    // come out at ~50x (~2000x) the baseline above - any gap beyond that
+    // multiple would mean the loop's own shape, not preg_match(), is what got
+    // measured. This is also the unchecked control for the batched
+    // handler-checking rows further down: the same loop, with nothing checked.
+    'preg_match() inline (50x)'         => batchedMatchUnchecked(50, $pattern, $subject),
+    'preg_match() inline (2000x)'       => batchedMatchUnchecked(2000, $pattern, $subject),
     // The same shape, against the pattern that will not compile. No error is
     // read back here - nothing clears or checks it - so the gap to the
     // baseline is purely the cost of a failing, uncached compile on every
@@ -295,13 +304,13 @@ $subjects = [
             restore_error_handler();
         }
     },
-    // The same pair at two batch sizes: 50 and 2000, forty times apart, to see
-    // whether the batch size itself moves the per-match cost or the smaller
-    // batch already shows the floor.
+    // The same handler-checking idiom, batched at two sizes 50 and 2000
+    // matches apart, to see whether the batch size itself moves the cost or
+    // the smaller batch already shows the floor. Compare each against its
+    // unchecked counterpart above ('preg_match() inline (50x)'/'(2000x)') to
+    // isolate exactly what the checking costs at that batch size.
     '50x match + handler + lastError'   => batchedMatchWithHandler(50, $pattern, $subject),
-    '50x match, unchecked'              => batchedMatchUnchecked(50, $pattern, $subject),
     '2000x match + handler + lastError' => batchedMatchWithHandler(2000, $pattern, $subject),
-    '2000x match, unchecked'            => batchedMatchUnchecked(2000, $pattern, $subject),
 ];
 
 // The cap comes from the preset and the number of methods together: they share

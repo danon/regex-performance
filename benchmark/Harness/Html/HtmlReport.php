@@ -104,7 +104,7 @@ final class HtmlReport
             <p class="desc">Median of the tail rounds, once each method's noise floor was reached, {$roundsRun} rounds to converge across all methods. Every method is shown as the baseline plus or minus what it changes.</p>
             <table class="data-table">
               <thead>
-                <tr><th>Method</th><th>Cost</th><th class="num">ns/op</th><th class="num">vs. base</th></tr>
+                <tr><th>Method</th><th>Cost</th><th class="num">vs. base</th></tr>
               </thead>
               <tbody>
         {$rows}      </tbody>
@@ -132,11 +132,10 @@ final class HtmlReport
 
     private function renderRow(SummaryRow $row): string {
         return sprintf(
-            "<tr><td><span class=\"swatch\" style=\"background:%s\"></span>%s</td><td>%s</td><td class=\"num\">%.1f</td><td class=\"num\">%s</td></tr>\n",
+            "<tr><td><span class=\"swatch\" style=\"background:%s\"></span>%s</td><td>%s</td><td class=\"num\">%s</td></tr>\n",
             htmlspecialchars($row->color),
             htmlspecialchars($row->name),
             htmlspecialchars($row->cost),
-            $row->averageNs,
             htmlspecialchars($row->delta),
         );
     }
