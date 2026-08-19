@@ -13,7 +13,6 @@ final class SummaryRow
         public readonly string $name,
         public readonly string $color,
         public readonly string $cost,
-        public readonly int    $iterations,
         public readonly float  $averageNs,
         public readonly string $delta,
     ) {
@@ -25,7 +24,6 @@ final class SummaryRow
             $method->name,
             $color,
             number_format($method->average, 0) . ' ns',
-            $method->iterations,
             $method->average,
             '—',
         );
@@ -41,7 +39,6 @@ final class SummaryRow
             $method->name,
             $color,
             self::cost($baseline->average, $method->average - $baseline->average),
-            $method->iterations,
             $method->average,
             sprintf('%+.0f%%', ($method->average / $baseline->average - 1) * 100),
         );

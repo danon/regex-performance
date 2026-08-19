@@ -7,11 +7,21 @@
  * only place that says what those bodies do. Adding or changing a call shape
  * means editing this file and nothing else.
  *
- *   php benchmark/main.php [--quick|--full] [report-name]
+ *   php benchmark/main.php [--quick|--1min|--5min|--full] [report-name]
  *
- * --full (the default) measures until the timings settle; --quick trades that
- * accuracy for a run that finishes in seconds, which is what you want while
- * changing the call shapes above or the harness itself.
+ * The mode is how long you are willing to wait, and each one is a ceiling on
+ * the whole run rather than a promise to use it all:
+ *
+ *   --quick   up to 15 seconds  - proves the run works end to end; not to be
+ *                                 quoted, the noise it lets through is real
+ *   --1min    up to 1 minute    - enough to see whether a change moved anything
+ *   --5min    up to 5 minutes   - close enough to compare numbers with
+ *   --full    up to 15 minutes  - the default; measures until the timings
+ *                                 settle, usually landing between 8 and 15
+ *
+ * A run that settles early stops early, so the shorter modes typically come in
+ * under their name. The longer ones ask for more agreement before they call a
+ * method settled, so they typically do not.
  *
  * The report is written to benchmark/reports/<report-name>.json, so runs can be
  * kept side by side - before and after a change, one PHP version and the next -
@@ -22,8 +32,8 @@
 
 use Benchmark\Harness\Benchmark;
 use Benchmark\Harness\Calibrator;
-use Benchmark\Harness\ConvergenceSettings;
 use Benchmark\Harness\Reports;
+use Benchmark\Harness\RunPreset;
 use Benchmark\Harness\Ui\CliInterface;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -59,14 +69,22 @@ foreach (array_slice($argv, 1) as $arg) {
     }
 }
 
-$unknown = array_diff($options, ['--quick', '--full']);
+$unknown = array_diff($options, ['--quick', '--1min', '--5min', '--full']);
 if ($unknown !== []) {
     fwrite(STDERR, "Unknown option: " . implode(' ', $unknown) . "\n");
-    fwrite(STDERR, "Usage: php benchmark/main.php [--quick|--full] [report-name]\n");
+    fwrite(STDERR, "Usage: php benchmark/main.php [--quick|--1min|--5min|--full] [report-name]\n");
     exit(1);
 }
 
-$quick = in_array('--quick', $options, true);
+// One flag could be allowed to quietly beat another, but with four of them
+// silently picking one is worse than saying nothing was picked.
+$modes = array_values(array_unique(array_intersect($options, ['--quick', '--1min', '--5min', '--full'])));
+if (count($modes) > 1) {
+    fwrite(STDERR, "Pick one mode, not " . implode(' ', $modes) . "\n");
+    exit(1);
+}
+
+$mode = $modes[0] ?? '--full';
 $name = $positional[0] ?? 'preg-match-call-shapes';
 
 $pattern = '/^[\w.+-]+@[\w-]+\.[\w.]{2,}$/';
@@ -78,21 +96,22 @@ $subject = 'daniel.wilkowski@example.co.uk';
 // it would not price a real compilation failure.
 $brokenPattern = '/^[\w.+-]+@[\w-]+\.[\w.{2,}$/';
 
-// A full round of 0.5s stays comfortably above scheduler/timer noise while
-// still redrawing the table a couple of times a second per method. A quick
-// round is short enough that the noise it lets through is real - it is there to
-// prove the run works end to end, not to be quoted.
-$calibrator = $quick
-    ? new Calibrator(0.05, 1_000, 100_000_000)
-    : new Calibrator(0.5, 1_000, 100_000_000);
-
-// Quick mode also stops asking for as much agreement: shorter blocks, a looser
-// tolerance, a shorter streak, and a cap low enough to bound the whole run.
-$convergence = $quick
-    ? new ConvergenceSettings(5, 0.05, 2, 60, 3)
-    : new ConvergenceSettings(20, 0.01, 4, 3_000, 10);
-
-$benchmark = new Benchmark(new CliInterface($name), $calibrator, $convergence);
+// Each mode is a time budget with thresholds to match. A longer round averages
+// out more scheduler and timer noise; a longer budget buys the rounds needed to
+// hold a tighter tolerance for a longer streak. Every knob moves in step, so
+// each preset is stricter than the one above it on all of them, and the round
+// cap each one needs is worked out from its budget rather than guessed - see
+// RunPreset.
+//
+// The budget is a ceiling. A run that settles early stops early, which is why
+// the shorter modes usually come in well under their name and the longer ones,
+// asking for more agreement, usually do not.
+$preset = match ($mode) {
+    '--quick' => new RunPreset(0.05, 15, 5, 0.05, 2, 3),
+    '--1min'  => new RunPreset(0.1, 60, 10, 0.03, 2, 5),
+    '--5min'  => new RunPreset(0.25, 300, 15, 0.015, 3, 8),
+    '--full'  => new RunPreset(0.5, 900, 20, 0.01, 4, 10),
+};
 
 // Baseline first - every other method is reported against it. Each body assigns
 // its result to a variable that is never read, identically in all of them:
@@ -104,7 +123,7 @@ $benchmark = new Benchmark(new CliInterface($name), $calibrator, $convergence);
 // way round because a custom error handler is not an option - one that returns
 // true stops error_get_last() being populated at all, which is the very thing
 // being read.
-$report = $benchmark->measure([
+$subjects = [
     'plain (inline preg_match)'        => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, $subject) === 1;
@@ -208,7 +227,18 @@ $report = $benchmark->measure([
             restore_error_handler();
         }
     },
-]);
+];
+
+// The cap comes from the preset and the number of methods together: they share
+// the budget round-robin, so what each one may take depends on how many of them
+// there are.
+$benchmark = new Benchmark(
+    new CliInterface($name),
+    new Calibrator($preset->roundSeconds, 1_000, 100_000_000),
+    $preset->convergenceFor(count($subjects)),
+);
+
+$report = $benchmark->measure($subjects);
 
 $path = (new Reports(__DIR__ . '/reports'))->save($report, $name);
 
