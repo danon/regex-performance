@@ -54,6 +54,57 @@ function matchOnce(string $pattern, string $subject): bool {
     return preg_match($pattern, $subject) === 1;
 }
 
+/**
+ * Checking in batches instead of per call: install the handler once, run
+ * $batchSize matches under it, ask preg_last_error() whether PCRE itself gave
+ * up - on a backtrack or recursion limit, which a warning would not tell you
+ * about - and put the old handler back.
+ *
+ * This is what the per-call rows look like when the price of checking is
+ * spread over many calls rather than paid on every one, so it is still
+ * reported per match: the outer loop runs a $batchSize'th as many times, and
+ * the inner one restores the count. A remainder of fewer than $batchSize
+ * matches is dropped, which at the iteration counts these run at is under a
+ * hundredth of a percent.
+ */
+function batchedMatchWithHandler(int $batchSize, string $pattern, string $subject): Closure {
+    return static function (int $n) use ($batchSize, $pattern, $subject): void {
+        $error = null;
+        $handler = static function (int $code, string $message) use (&$error): bool {
+            $error = $message;
+            return true;
+        };
+        $batches = \intDiv($n, $batchSize);
+        for ($batch = 0; $batch < $batches; $batch++) {
+            $error = null;
+            set_error_handler($handler);
+            for ($i = 0; $i < $batchSize; $i++) {
+                $matched = preg_match($pattern, $subject) === 1;
+            }
+            $failure = preg_last_error();
+            restore_error_handler();
+        }
+    };
+}
+
+/**
+ * The same batching with nothing checked at all - no handler, no
+ * preg_last_error() - so the pair differs by exactly the checking. It also
+ * doubles as a control on the batching itself: the nested loop should cost
+ * what the flat baseline costs, and a gap between them would mean the shape
+ * of the loop is being measured rather than the work inside it.
+ */
+function batchedMatchUnchecked(int $batchSize, string $pattern, string $subject): Closure {
+    return static function (int $n) use ($batchSize, $pattern, $subject): void {
+        $batches = \intDiv($n, $batchSize);
+        for ($batch = 0; $batch < $batches; $batch++) {
+            for ($i = 0; $i < $batchSize; $i++) {
+                $matched = preg_match($pattern, $subject) === 1;
+            }
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
@@ -80,7 +131,7 @@ if ($unknown !== []) {
 // silently picking one is worse than saying nothing was picked.
 $modes = array_values(array_unique(array_intersect($options, ['--quick', '--1min', '--5min', '--full'])));
 if (count($modes) > 1) {
-    fwrite(STDERR, "Pick one mode, not " . implode(' ', $modes) . "\n");
+    \fWrite(STDERR, "Pick one mode, not " . implode(' ', $modes) . "\n");
     exit(1);
 }
 
@@ -124,7 +175,7 @@ $preset = match ($mode) {
 // true stops error_get_last() being populated at all, which is the very thing
 // being read.
 $subjects = [
-    'preg_match() inline'              => static function (int $n) use ($pattern, $subject): void {
+    'preg_match() inline'               => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, $subject) === 1;
         }
@@ -134,7 +185,7 @@ $subjects = [
     // baseline is purely the cost of a failing, uncached compile on every
     // call. The warning still has to be suppressed with `@`, or it would
     // print on every iteration of every round.
-    'preg_match() inline (error)'      => static function (int $n) use ($brokenPattern, $subject): void {
+    'preg_match() inline (error)'       => static function (int $n) use ($brokenPattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = @preg_match($brokenPattern, $subject) === 1;
         }
@@ -142,7 +193,7 @@ $subjects = [
     // Nothing to scan, so this is the floor: what a preg_match() costs before
     // any of the subject has been looked at. The gap to the baseline is what
     // matching those 30 characters actually costs.
-    'preg_match(empty)'                => static function (int $n) use ($pattern): void {
+    'preg_match(empty)'                 => static function (int $n) use ($pattern): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match($pattern, '') === 1;
         }
@@ -150,26 +201,26 @@ $subjects = [
     // Emptier still: nothing to compile and nothing to scan. Whatever this
     // costs is what preg_match() charges for being called at all, and no
     // pattern or subject can bring it below.
-    'preg_match(//, empty)'            => static function (int $n): void {
+    'preg_match(//, empty)'             => static function (int $n): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = preg_match('//', '') === 1;
         }
     },
-    'preg_match(subject)'              => static function (int $n) use ($pattern, $subject): void {
+    'preg_match(subject)'               => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             $matched = matchOnce($pattern, $subject);
         }
     },
     // Half the idiom: clearing beforehand, without reading anything back. The
     // gap to the baseline is what error_clear_last() costs on its own.
-    'clear + match'                    => static function (int $n) use ($pattern, $subject): void {
+    'clear + match'                     => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             error_clear_last();
             $matched = preg_match($pattern, $subject) === 1;
         }
     },
     // The whole idiom on the happy path, where there is no error to find.
-    'clear + match + read (no error)'  => static function (int $n) use ($pattern, $subject): void {
+    'clear + match + read (no error)'   => static function (int $n) use ($pattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             error_clear_last();
             $matched = @preg_match($pattern, $subject) === 1;
@@ -187,7 +238,7 @@ $subjects = [
     // pattern that fails to compile is not cached, so every call recompiles it
     // and fails again: what is priced here is a failing compile, not just the
     // reading of an error.
-    'clear + match + read (error)'     => static function (int $n) use ($brokenPattern, $subject): void {
+    'clear + match + read (error)'      => static function (int $n) use ($brokenPattern, $subject): void {
         for ($i = 0; $i < $n; $i++) {
             error_clear_last();
             $matched = @preg_match($brokenPattern, $subject) === 1;
@@ -208,7 +259,7 @@ $subjects = [
     // here is set_error_handler() and restore_error_handler() and not the
     // allocation of a handler. An implementation that builds a fresh closure
     // per call pays more than this row shows.
-    'set + match + restore (no error)' => static function (int $n) use ($pattern, $subject): void {
+    'set + match + restore (no error)'  => static function (int $n) use ($pattern, $subject): void {
         $error = null;
         $handler = static function (int $code, string $message) use (&$error): bool {
             $error = $message;
@@ -231,7 +282,7 @@ $subjects = [
     // row that is directly comparable to its own no-error row - the difference
     // between the two is the error and nothing else. The failing compile is
     // still uncached and repeated on every call, the same as the row above.
-    'set + match + restore (error)'    => static function (int $n) use ($brokenPattern, $subject): void {
+    'set + match + restore (error)'     => static function (int $n) use ($brokenPattern, $subject): void {
         $error = null;
         $handler = static function (int $code, string $message) use (&$error): bool {
             $error = $message;
@@ -245,51 +296,13 @@ $subjects = [
             restore_error_handler();
         }
     },
-    // Checking in batches instead of per call: install the handler once, run
-    // fifty matches under it, ask preg_last_error() whether PCRE itself gave up
-    // - on a backtrack or recursion limit, which a warning would not tell you
-    // about - and put the old handler back.
-    //
-    // This is what the per-call rows above look like when the price of checking
-    // is spread over fifty calls rather than paid on every one, so it is still
-    // reported per match: the outer loop runs a fiftieth as many times, and the
-    // inner one restores the count. A remainder of fewer than fifty matches is
-    // dropped, which at the iteration counts these run at is under a hundredth
-    // of a percent.
-    '50x match + handler + lastError'  => static function (int $n) use ($pattern, $subject): void {
-        $error = null;
-        $handler = static function (int $code, string $message) use (&$error): bool {
-            $error = $message;
-
-            return true;
-        };
-
-        $batches = intdiv($n, 50);
-        for ($batch = 0; $batch < $batches; $batch++) {
-            $error = null;
-            set_error_handler($handler);
-
-            for ($i = 0; $i < 50; $i++) {
-                $matched = preg_match($pattern, $subject) === 1;
-            }
-
-            $failure = preg_last_error();
-            restore_error_handler();
-        }
-    },
-    // The same batching with nothing checked at all - no handler, no
-    // preg_last_error() - so the pair differs by exactly the checking. It also
-    // doubles as a control on the batching itself: the nested loop should cost
-    // what the flat baseline costs, and a gap between them would mean the shape
-    // of the loop is being measured rather than the work inside it.
-    '50x match, unchecked'             => static function (int $n) use ($pattern, $subject): void {
-        $batches = intdiv($n, 50);
-        for ($batch = 0; $batch < $batches; $batch++) {
-            for ($i = 0; $i < 50; $i++) {
-                $matched = preg_match($pattern, $subject) === 1;
-            }
-        }
-    },
+    // The same pair at two batch sizes: 50 and 2000, forty times apart, to see
+    // whether the batch size itself moves the per-match cost or the smaller
+    // batch already shows the floor.
+    '50x match + handler + lastError'   => batchedMatchWithHandler(50, $pattern, $subject),
+    '50x match, unchecked'              => batchedMatchUnchecked(50, $pattern, $subject),
+    '2000x match + handler + lastError' => batchedMatchWithHandler(2000, $pattern, $subject),
+    '2000x match, unchecked'            => batchedMatchUnchecked(2000, $pattern, $subject),
 ];
 
 // The cap comes from the preset and the number of methods together: they share
