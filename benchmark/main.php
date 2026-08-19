@@ -60,12 +60,12 @@ function matchOnce(string $pattern, string $subject): bool {
  * up - on a backtrack or recursion limit, which a warning would not tell you
  * about - and put the old handler back.
  *
- * This is what the per-call rows look like when the price of checking is
- * spread over many calls rather than paid on every one, so it is still
- * reported per match: the outer loop runs a $batchSize'th as many times, and
- * the inner one restores the count. A remainder of fewer than $batchSize
- * matches is dropped, which at the iteration counts these run at is under a
- * hundredth of a percent.
+ * $n is the number of times the harness calls this closure, i.e. the number
+ * of batches, not the number of matches - so the reported ns/op is the cost
+ * of one whole batch (its $batchSize matches included), not divided back down
+ * to a per-match figure. That is deliberate: it is what lets a bigger
+ * $batchSize show up as a proportionally bigger cost instead of quietly
+ * normalising itself away.
  */
 function batchedMatchWithHandler(int $batchSize, string $pattern, string $subject): Closure {
     return static function (int $n) use ($batchSize, $pattern, $subject): void {
@@ -74,8 +74,7 @@ function batchedMatchWithHandler(int $batchSize, string $pattern, string $subjec
             $error = $message;
             return true;
         };
-        $batches = \intDiv($n, $batchSize);
-        for ($batch = 0; $batch < $batches; $batch++) {
+        for ($batch = 0; $batch < $n; $batch++) {
             $error = null;
             set_error_handler($handler);
             for ($i = 0; $i < $batchSize; $i++) {
@@ -91,13 +90,13 @@ function batchedMatchWithHandler(int $batchSize, string $pattern, string $subjec
  * The same batching with nothing checked at all - no handler, no
  * preg_last_error() - so the pair differs by exactly the checking. It also
  * doubles as a control on the batching itself: the nested loop should cost
- * what the flat baseline costs, and a gap between them would mean the shape
- * of the loop is being measured rather than the work inside it.
+ * $batchSize times what the flat baseline costs, and any gap beyond that
+ * multiple would mean the shape of the loop is being measured rather than the
+ * work inside it.
  */
 function batchedMatchUnchecked(int $batchSize, string $pattern, string $subject): Closure {
     return static function (int $n) use ($batchSize, $pattern, $subject): void {
-        $batches = \intDiv($n, $batchSize);
-        for ($batch = 0; $batch < $batches; $batch++) {
+        for ($batch = 0; $batch < $n; $batch++) {
             for ($i = 0; $i < $batchSize; $i++) {
                 $matched = preg_match($pattern, $subject) === 1;
             }
